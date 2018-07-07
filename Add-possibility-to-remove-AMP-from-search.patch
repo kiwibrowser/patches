@@ -1,0 +1,129 @@
+From c62e43bf4c2d4883545840eb57f3bec820c8d3ec Mon Sep 17 00:00:00 2001
+From: Kiwi Browser <team@geometry.ee>
+Date: Sat, 16 Jun 2018 14:47:08 +0000
+Subject: [PATCH] [Kiwi] Add possibility to remove AMP from search
+
+---
+ chrome/android/java/res/values/strings.xml         |  3 ++
+ .../android/java/res/xml/privacy_preferences.xml   |  5 +++
+ .../chrome/browser/PersonalizeResults.java         | 41 +++++++++++++++++++++-
+ .../preferences/privacy/PrivacyPreferences.java    |  5 +++
+ 4 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/android/java/res/values/strings.xml b/chrome/android/java/res/values/strings.xml
+index 7f8146d..1c76ffa 100644
+--- a/chrome/android/java/res/values/strings.xml
++++ b/chrome/android/java/res/values/strings.xml
+@@ -50,6 +50,9 @@
+     <string name="nightmode_grayscale_title">Grayscale night mode</string>
+     <string name="nightmode_grayscale_summary">Prefer grayscale version of night mode</string>
+ 
++    <string name="avoid_amp_websites_title">Remove AMP</string>
++    <string name="avoid_amp_websites_summary">Prefer direct websites instead of AMP version</string>
++
+     <string name="menu_adblock">Hide annoying ads</string>
+     <string name="menu_exit">Exit</string>
+ 
+diff --git a/chrome/android/java/res/xml/privacy_preferences.xml b/chrome/android/java/res/xml/privacy_preferences.xml
+index 79a376f..97201d2 100644
+--- a/chrome/android/java/res/xml/privacy_preferences.xml
++++ b/chrome/android/java/res/xml/privacy_preferences.xml
+@@ -48,6 +48,11 @@
+         android:title="@string/contextual_search_title"
+         android:fragment="org.chromium.chrome.browser.preferences.privacy.ContextualSearchPreferenceFragment" />
+     <org.chromium.chrome.browser.preferences.ChromeBaseCheckBoxPreference
++        android:key="avoid_amp_websites"
++        android:title="@string/avoid_amp_websites_title"
++        android:summary="@string/avoid_amp_websites_summary"
++        android:defaultValue="false" />
++    <org.chromium.chrome.browser.preferences.ChromeBaseCheckBoxPreference
+         android:key="close_tabs_on_exit"
+         android:title="@string/close_tabs_on_exit_title"
+         android:summary="@string/close_tabs_on_exit_summary"
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/PersonalizeResults.java b/chrome/android/java/src/org/chromium/chrome/browser/PersonalizeResults.java
+index 64161b4..dd31bfc 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/PersonalizeResults.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/PersonalizeResults.java
+@@ -5,6 +5,7 @@
+ package org.chromium.chrome.browser;
+ 
+ import org.chromium.base.Log;
++import org.chromium.base.ContextUtils;
+ import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+ import org.chromium.chrome.browser.tab.Tab;
+ 
+@@ -12,11 +13,49 @@ import java.net.URL;
+ import java.net.MalformedURLException;
+ 
+ public class PersonalizeResults {
+     public static void Execute(Tab tab) {
++       final boolean shouldRemoveAmp = ContextUtils.getAppSharedPreferences().getBoolean("avoid_amp_websites", false);
++       if (shouldRemoveAmp && tab != null && IsSearchUrl(tab.getUrl())) {
++          tab.getWebContents().evaluateJavaScript(SCRIPT, null);
++       }
+     }
+ 
+     private static boolean IsSearchUrl(String sUrl) {
++        if (sUrl == null || sUrl.isEmpty()) {
++          return false;
++        }
++
++        try {
++          URL url = new URL(sUrl);
++            String sHost = url.getHost();
++            if (sHost.contains(".google."))
++                return true;
++        } catch(MalformedURLException e) {
++          Log.w(TAG, "MalformedURLException "+ e.getMessage());
++        }
++
+         return false;
+     }
++
++    private static final String SCRIPT = ""
+++"(function() {"
+++"function _cleanupAmp()"
+++"{"
+++"  document.querySelectorAll('a[data-amp-cur]').forEach(function(a) {"
+++"    a.href = a.getAttribute('data-amp-cur');"
+++"    if (!a.href.indexOf('?') !== -1) a.href = a.href + '?';"
+++"    a.removeAttribute('data-amp');"
+++"    a.removeAttribute('data-amp-cur');"
+++"    a.removeAttribute('ping');"
+++"  });"
+++""
+++"  document.querySelectorAll('span[aria-label=\"AMP logo\"]').forEach(function(a) {"
+++"     a.style.display='none';"
+++"  });"
+++"}"
+++""
+++"document.addEventListener('DOMNodeInserted', _cleanupAmp);"
+++"_cleanupAmp();"
+++"})();";
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/preferences/privacy/PrivacyPreferences.java b/chrome/android/java/src/org/chromium/chrome/browser/preferences/privacy/PrivacyPreferences.java
+index 767b55e..e558a10b 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/preferences/privacy/PrivacyPreferences.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/preferences/privacy/PrivacyPreferences.java
+@@ -48,6 +48,7 @@ public class PrivacyPreferences extends PreferenceFragment
+     private static final String PREF_DO_NOT_TRACK = "do_not_track";
+     private static final String PREF_USAGE_AND_CRASH_REPORTING = "usage_and_crash_reports";
+     private static final String PREF_CLEAR_BROWSING_DATA = "clear_browsing_data";
++    private static final String PREF_AVOID_AMP_WEBSITES = "avoid_amp_websites";
+ 
+     private ManagedPreferenceDelegate mManagedPreferenceDelegate;
+ 
+@@ -156,6 +157,10 @@ public class PrivacyPreferences extends PreferenceFragment
+             SharedPreferences.Editor sharedPreferencesEditor = ContextUtils.getAppSharedPreferences().edit();
+             sharedPreferencesEditor.putBoolean(PREF_CLOSE_TABS_ON_EXIT, (boolean)newValue);
+             sharedPreferencesEditor.apply();
++        } else if (PREF_AVOID_AMP_WEBSITES.equals(key)) {
++            SharedPreferences.Editor sharedPreferencesEditor = ContextUtils.getAppSharedPreferences().edit();
++            sharedPreferencesEditor.putBoolean(PREF_AVOID_AMP_WEBSITES, (boolean)newValue);
++            sharedPreferencesEditor.apply();
+         }
+ 
+         return true;
+-- 
+2.7.4
+
