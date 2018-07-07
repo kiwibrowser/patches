@@ -1,0 +1,1501 @@
+ .../res/layout/suggestions_bottom_sheet_logo.xml   |  18 --
+ chrome/android/java/res/menu/main_menu.xml         |  15 --
+ .../chromium/chrome/browser/ChromeActivity.java    |   6 +-
+ .../chrome/browser/ChromeTabbedActivity.java       |  72 ++-----
+ .../browser/appmenu/AppMenuPropertiesDelegate.java |   4 +-
+ .../fullscreen/ChromeFullscreenManager.java        |   5 -
+ .../chrome/browser/omnibox/LocationBarLayout.java  |  30 +--
+ .../suggestions/SuggestionsBottomSheetContent.java | 153 +------------
+ .../SuggestionsNavigationDelegateImpl.java         |   5 +-
+ .../chrome/browser/tabmodel/EmptyTabModel.java     |   8 -
+ .../browser/tabmodel/EmptyTabModelObserver.java    |   3 -
+ .../chrome/browser/tabmodel/IncognitoTabModel.java |  17 +-
+ .../chrome/browser/tabmodel/SingleTabModel.java    |   8 -
+ .../chromium/chrome/browser/tabmodel/TabModel.java |  13 --
+ .../chrome/browser/tabmodel/TabModelImpl.java      |  20 +-
+ .../chrome/browser/tabmodel/TabModelObserver.java  |   8 -
+ .../chrome/browser/tabmodel/TabWindowManager.java  |   6 -
+ .../tabmodel/document/DocumentTabModelImpl.java    |   8 -
+ .../chrome/browser/toolbar/BottomToolbarPhone.java | 104 +++------
+ .../chrome/browser/toolbar/ToolbarManager.java     |   6 -
+ .../chrome/browser/toolbar/ToolbarModelImpl.java   |  14 +-
+ .../browser/widget/bottomsheet/BottomSheet.java    |  41 ----
+ .../bottomsheet/BottomSheetContentController.java  |   7 +-
+ .../bottomsheet/BottomSheetNewTabController.java   | 237 ---------------------
+ chrome/android/java_sources.gni                    |   1 -
+ ...ggestionsSheetVisibilityChangeObserverTest.java |  39 ----
+ .../tabmodel/document/MockDocumentTabModel.java    |   8 -
+ 27 files changed, 68 insertions(+), 788 deletions(-)
+ delete mode 100644 chrome/android/java/res/layout/suggestions_bottom_sheet_logo.xml
+ delete mode 100644 chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNewTabController.java
+
+diff --git a/chrome/android/java/res/layout/suggestions_bottom_sheet_logo.xml b/chrome/android/java/res/layout/suggestions_bottom_sheet_logo.xml
+deleted file mode 100644
+index 60e233d..0000000
++-- a/chrome/android/java/res/layout/suggestions_bottom_sheet_logo.xml
+-++ /dev/null
+@@ -1,18 +0,0 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Copyright 2017 The Chromium Authors. All rights reserved.
++     Use of this source code is governed by a BSD-style license that can be
++     found in the LICENSE file. -->
++
++<FrameLayout
++    xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="match_parent"
++    android:layout_height="@dimen/ntp_logo_height">
++
++    <org.chromium.chrome.browser.ntp.LogoView
++        android:id="@+id/search_provider_logo"
++        android:layout_width="match_parent"
++        android:layout_height="@dimen/ntp_logo_height"
++        android:layout_marginTop="@dimen/ntp_logo_margin_top_modern"
++        android:layout_marginBottom="@dimen/ntp_logo_margin_bottom_modern" />
++
++</FrameLayout>
+\ No newline at end of file
+diff --git a/chrome/android/java/res/menu/main_menu.xml b/chrome/android/java/res/menu/main_menu.xml
+index 5451359..3b5aa0e 100644
++-- a/chrome/android/java/res/menu/main_menu.xml
+-++ b/chrome/android/java/res/menu/main_menu.xml
+@@ -95,21 +95,6 @@
+              android:title="@string/menu_preferences" />
+     </group>
+ 
++    <!-- Items shown only in the the BottomSheet NTP UI -->
++    <group android:id="@+id/BOTTOM_SHEET_NTP_MENU"
++        android:visible="false">
++         <item android:id="@id/new_tab_menu_id"
++             android:title="@string/menu_new_tab" />
++         <item android:id="@id/new_incognito_tab_menu_id"
++             android:title="@string/menu_new_incognito_tab" />
++         <item android:id="@id/recent_tabs_menu_id"
++            android:title="@string/menu_recent_tabs" />
++         <item android:id="@id/preferences_id"
++             android:title="@string/menu_preferences" />
++         <item android:id="@id/help_id"
++            android:title="@string/menu_help" />
++    </group>
++
+     <!-- Items shown only when the tablet has no visible tabs -->
+     <group android:id="@+id/TABLET_EMPTY_MODE_MENU"
+         android:visible="false">
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ChromeActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/ChromeActivity.java
+index 11d0855..9f1be0f 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/ChromeActivity.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeActivity.java
+@@ -1916,11 +1916,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
+         final Tab currentTab = getActivityTab();
+ 
+         if (id == R.id.help_id) {
++            String url = currentTab != null
++                    ? currentTab.getUrl()
++                    : getBottomSheet() != null && mBottomSheet.isShowingNewTab()
++                            ? UrlConstants.NTP_URL
++                            : "";
+-            String url = currentTab != null ? currentTab.getUrl() : "";
+             Profile profile = mTabModelSelector.isIncognitoSelected()
+                     ? Profile.getLastUsedProfile().getOffTheRecordProfile()
+                     : Profile.getLastUsedProfile().getOriginalProfile();
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
+index f172f0b..15a3a27 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
+@@ -992,16 +992,7 @@ public class ChromeTabbedActivity
+                 return false;
+             }
+ 
++            if (isInOverviewMode()) {
++                if (reuseOrCreateNewNtp()) {
++                    // Since reusing/creating a new NTP when using Chrome Home brings up the
++                    // bottom sheet, we need to record it in our metrics.
++                    bottomSheet.getBottomSheetMetrics().recordSheetOpenReason(
++                            StateChangeReason.STARTUP);
++                    return true;
++                }
++                return false;
++            }
+-            if (isInOverviewMode()) return false;
+ 
+             boolean hasTabs = getCurrentTabModel().getCount() > 0
+                     || mTabModelSelectorImpl.getRestoredTabCount() > 0;
+@@ -1130,15 +1121,9 @@ public class ChromeTabbedActivity
+             }
+ 
+             mIntentWithEffect = false;
++            boolean activeTabBeingRestored = false;
+             if (getSavedInstanceState() == null && intent != null) {
+                 if (!mIntentHandler.shouldIgnoreIntent(intent)) {
+                     mIntentWithEffect = mIntentHandler.onNewIntent(intent);
++
++                    // Allow the active tab to be restored so that the correct tab is selected when
++                    // the bottom sheet NTP UI is closed.
++                    activeTabBeingRestored |= (getBottomSheet() != null
++                            && NewTabPage.isNTPUrl(IntentHandler.getUrlFromIntent(intent)));
+                 }
+ 
+                 if (isMainIntentFromLauncher(intent)) {
+@@ -1163,7 +1148,7 @@ public class ChromeTabbedActivity
+             // We always need to try to restore tabs. The set of tabs might be empty, but at least
+             // it will trigger the notification that tab restore is complete which is needed by
+             // other parts of Chrome such as sync.
++            activeTabBeingRestored |= !mIntentWithEffect;
+-            boolean activeTabBeingRestored = !mIntentWithEffect;
+ 
+             mMainIntentMetrics.setIgnoreEvents(true);
+             mTabModelSelectorImpl.restoreTabs(activeTabBeingRestored);
+@@ -1225,11 +1210,6 @@ public class ChromeTabbedActivity
+         }
+         if (mLayoutManager != null && mLayoutManager.overviewVisible()
+                 && mIsAccessibilityEnabled != enabled) {
++            if (getBottomSheet() != null && getBottomSheet().isShowingNewTab()) {
++                // Close the bottom sheet immediately before hiding the overview since the
++                // BottomSheet NTP UI requires overview mode to be showing.
++                getBottomSheet().setSheetState(BottomSheet.SHEET_STATE_PEEK, false);
++            }
+             mLayoutManager.hideOverview(false);
+             if (getTabModelSelector().getCurrentModel().getCount() == 0) {
+                 getCurrentTabCreator().launchNTP();
+@@ -1261,31 +1241,16 @@ public class ChromeTabbedActivity
+                     intent, IntentHandler.EXTRA_INVOKED_FROM_SHORTCUT, false);
+ 
+             if (getBottomSheet() != null) {
++                // If the bottom sheet new tab UI is showing and the tab open type is not
++                // already OPEN_NEW_TAB or OPEN_NEW_INCOGNITO_TAB, set the open type so that a real
++                // new tab will be created and added to the appropriate model.
++                if (getBottomSheet().isShowingNewTab()
++                        && tabOpenType == TabOpenType.CLOBBER_CURRENT_TAB) {
++                    tabOpenType = mTabModelSelectorImpl.isIncognitoSelected()
++                            ? TabOpenType.OPEN_NEW_INCOGNITO_TAB
++                            : TabOpenType.OPEN_NEW_TAB;
++                }
++
++                if (!NewTabPage.isNTPUrl(url)) {
++                    // Either a url is being loaded in a new tab, a tab is being clobbered, or a tab
++                    // is being brought to the front. In all scenarios, the bottom sheet should be
++                    // closed. If a new tab is being created from a launcher shortcut, close the
++                    // panel without animation because the panel will be re-opened immediately. If
++                    // a tab is being brought to the front, this indicates the user is coming back
++                    // to Chrome through external means (e.g. homescreen shortcut, media
++                    // notification) and animating the sheet closing is extraneous.
++                    boolean animateSheetClose = !fromLauncherShortcut
++                            && (tabOpenType == TabOpenType.CLOBBER_CURRENT_TAB
++                                       || tabOpenType == TabOpenType.OPEN_NEW_TAB
++                                       || tabOpenType == TabOpenType.OPEN_NEW_INCOGNITO_TAB);
++                    getBottomSheet().setSheetState(BottomSheet.SHEET_STATE_PEEK, animateSheetClose,
++                            StateChangeReason.NAVIGATION);
++                }
+-                // Either a url is being loaded in a new tab, a tab is being clobbered, or a tab
+-                // is being brought to the front. In all scenarios, the bottom sheet should be
+-                // closed. If a tab is being brought to the front, this indicates the user is coming
+-                // back to Chrome through external means (e.g. homescreen shortcut, media
+-                // notification) and animating the sheet closing is extraneous.
+-                boolean animateSheetClose = tabOpenType == TabOpenType.CLOBBER_CURRENT_TAB
+-                        || tabOpenType == TabOpenType.OPEN_NEW_TAB
+-                        || tabOpenType == TabOpenType.OPEN_NEW_INCOGNITO_TAB;
+-                getBottomSheet().setSheetState(BottomSheet.SHEET_STATE_PEEK, animateSheetClose,
+-                        StateChangeReason.NAVIGATION);
+             }
+ 
+             TabModel tabModel = getCurrentTabModel();
+@@ -1800,17 +1765,12 @@ public class ChromeTabbedActivity
+                 RecordUserAction.record("MobileMenuAllBookmarks");
+             }
+         } else if (id == R.id.recent_tabs_menu_id) {
++            if (currentTab != null
++                    || (getBottomSheet() != null && getBottomSheet().isShowingNewTab())) {
+-            if (currentTab != null) {
+                 LoadUrlParams params = new LoadUrlParams(
+                         UrlConstants.RECENT_TABS_URL, PageTransition.AUTO_BOOKMARK);
++                if (currentTab != null) {
++                    currentTab.loadUrl(params);
++                    if (currentTabIsNtp) {
++                        NewTabPageUma.recordAction(NewTabPageUma.ACTION_OPENED_RECENT_TABS_MANAGER);
++                    }
++                } else {
++                    getBottomSheet().loadUrl(params, getCurrentTabModel().isIncognito());
+-                currentTab.loadUrl(params);
+-                if (currentTabIsNtp) {
+-                    NewTabPageUma.recordAction(NewTabPageUma.ACTION_OPENED_RECENT_TABS_MANAGER);
+                 }
+ 
+                 RecordUserAction.record("MobileMenuRecentTabs");
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/appmenu/AppMenuPropertiesDelegate.java b/chrome/android/java/src/org/chromium/chrome/browser/appmenu/AppMenuPropertiesDelegate.java
+index a936e1c..9b0401e 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/appmenu/AppMenuPropertiesDelegate.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/appmenu/AppMenuPropertiesDelegate.java
+@@ -94,9 +94,7 @@ public class AppMenuPropertiesDelegate {
+             boolean hasTabs = mActivity.getCurrentTabModel().getCount() != 0;
+             return hasTabs && !isOverview;
+         } else {
++            boolean isBottomSheetNtpMenu = mActivity.getBottomSheet() != null
++                    && mActivity.getBottomSheet().isShowingNewTab();
++            return !isBottomSheetNtpMenu && !isOverview && mActivity.getActivityTab() != null;
+-            return !isOverview && mActivity.getActivityTab() != null;
+         }
+     }
+ 
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/fullscreen/ChromeFullscreenManager.java b/chrome/android/java/src/org/chromium/chrome/browser/fullscreen/ChromeFullscreenManager.java
+index 80442fa..ff9392d 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/fullscreen/ChromeFullscreenManager.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/fullscreen/ChromeFullscreenManager.java
+@@ -205,11 +205,6 @@ public class ChromeFullscreenManager
+             public void didCloseTab(int tabId, boolean incognito) {
+                 setTab(modelSelector.getCurrentTab());
+             }
++
++            @Override
++            public void pendingTabAdd(boolean isPendingTabAdd) {
++                setTab(modelSelector.getCurrentTab());
++            }
+         };
+ 
+         assert controlContainer != null;
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/omnibox/LocationBarLayout.java b/chrome/android/java/src/org/chromium/chrome/browser/omnibox/LocationBarLayout.java
+index 8346ffd..9fac2bd 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/omnibox/LocationBarLayout.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/omnibox/LocationBarLayout.java
+@@ -1157,9 +1157,7 @@ public class LocationBarLayout extends FrameLayout
+         // now count as a new session.
+         mHasStartedNewOmniboxEditSession = false;
+         mNewOmniboxEditSessionTimestamp = -1;
++        if (mNativeInitialized && mUrlHasFocus
++                && (mToolbarDataProvider.hasTab()
++                           || (mBottomSheet != null && mBottomSheet.isShowingNewTab()))) {
+-        if (mNativeInitialized && mUrlHasFocus && mToolbarDataProvider.hasTab()) {
+             mAutocomplete.startZeroSuggest(mToolbarDataProvider.getProfile(),
+                     mUrlBar.getTextWithAutocomplete(), mToolbarDataProvider.getCurrentUrl(),
+                     mToolbarDataProvider.getTitle(), mUrlFocusedFromFakebox);
+@@ -1200,17 +1198,13 @@ public class LocationBarLayout extends FrameLayout
+                     boolean preventAutocomplete = !mUrlBar.shouldAutocomplete();
+                     mRequestSuggestions = null;
+ 
++                    if (!mToolbarDataProvider.hasTab()
++                            && (mBottomSheet == null || !mBottomSheet.isShowingNewTab())) {
+-                    if (!mToolbarDataProvider.hasTab()) {
+                         // crbug.com/764749
+                         Log.w(TAG, "onTextChangedForAutocomplete: no tab");
+                         return;
+                     }
+ 
+                     Profile profile = mToolbarDataProvider.getProfile();
++                    String url = mToolbarDataProvider.hasTab()
++                            ? mToolbarDataProvider.getCurrentUrl()
++                            : UrlConstants.NTP_URL;
+                     int cursorPosition = -1;
+                     if (mUrlBar.getSelectionStart() == mUrlBar.getSelectionEnd()) {
+                         // Conveniently, if there is no selection, those two functions return -1,
+@@ -1218,8 +1212,9 @@ public class LocationBarLayout extends FrameLayout
+                         // position.  Hence, there's no need to check for -1 here explicitly.
+                         cursorPosition = mUrlBar.getSelectionStart();
+                     }
++                    mAutocomplete.start(profile, url, textWithoutAutocomplete, cursorPosition,
++                            preventAutocomplete, mUrlFocusedFromFakebox);
+-                    mAutocomplete.start(profile, mToolbarDataProvider.getCurrentUrl(),
+-                            textWithoutAutocomplete, cursorPosition, preventAutocomplete,
+-                            mUrlFocusedFromFakebox);
+                 }
+             };
+             if (mNativeInitialized) {
+@@ -1925,9 +1920,6 @@ public class LocationBarLayout extends FrameLayout
+         if (mToolbarDataProvider.hasTab()) {
+             mAutocomplete.start(mToolbarDataProvider.getProfile(),
+                     mToolbarDataProvider.getCurrentUrl(), query, -1, false, false);
++        } else if (mBottomSheet != null) {
++            mAutocomplete.start(mToolbarDataProvider.getProfile(), UrlConstants.NTP_URL, query, -1,
++                    false, false);
+         }
+         post(new Runnable() {
+             @Override
+@@ -2159,8 +2151,7 @@ public class LocationBarLayout extends FrameLayout
+         // If the URL is currently focused, do not replace the text they have entered with the URL.
+         // Once they stop editing the URL, the current tab's URL will automatically be filled in.
+         if (mUrlBar.hasFocus()) {
++            if ((mUrlFocusedWithoutAnimations && !NewTabPage.isNTPUrl(url))
++                    || (mBottomSheet != null && mBottomSheet.isShowingNewTab())) {
+-            if (mUrlFocusedWithoutAnimations && !NewTabPage.isNTPUrl(url)) {
+                 // If we did not run the focus animations, then the user has not typed any text.
+                 // So, clear the focus and accept whatever URL the page is currently attempting to
+                 // display. If the NTP is showing, the current page's URL should not be displayed.
+@@ -2281,14 +2272,7 @@ public class LocationBarLayout extends FrameLayout
+ 
+         // Loads the |url| in a new tab or the current ContentView and gives focus to the
+         // ContentView.
++        if (mBottomSheet != null && mBottomSheet.isShowingNewTab()) {
++            LoadUrlParams loadUrlParams = new LoadUrlParams(url);
++            loadUrlParams.setTransitionType(transition | PageTransition.FROM_ADDRESS_BAR);
++            mBottomSheet.loadUrlInNewTab(loadUrlParams);
++            // At this point the currentTab might be invalid, but the only use of a tab below, in
++            // focusCurrentTab method, will get an updated value of current tab.
++            RecordUserAction.record("MobileOmniboxUse");
++        } else if (currentTab != null && !url.isEmpty()) {
+-        if (currentTab != null && !url.isEmpty()) {
+             LoadUrlParams loadUrlParams = new LoadUrlParams(url);
+             loadUrlParams.setVerbatimHeaders(GeolocationHeader.getGeoHeader(url, currentTab));
+             loadUrlParams.setTransitionType(transition | PageTransition.FROM_ADDRESS_BAR);
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsBottomSheetContent.java b/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsBottomSheetContent.java
+index 8f0497f..8e88f650 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsBottomSheetContent.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsBottomSheetContent.java
+@@ -4,15 +4,10 @@
+ 
+ package org.chromium.chrome.browser.suggestions;
+ 
++import android.animation.ValueAnimator;
+ import android.content.res.Resources;
+ import android.support.annotation.Nullable;
+ import android.view.LayoutInflater;
+ import android.view.View;
++import android.view.View.OnAttachStateChangeListener;
++import android.view.animation.DecelerateInterpolator;
++import android.view.animation.Interpolator;
++import android.widget.FrameLayout;
+ 
+ import org.chromium.base.CollectionUtil;
+ import org.chromium.base.library_loader.LibraryProcessType;
+@@ -21,16 +16,9 @@ import org.chromium.chrome.browser.ChromeActivity;
+ import org.chromium.chrome.browser.ChromeFeatureList;
+ import org.chromium.chrome.browser.ntp.ContextMenuManager;
+ import org.chromium.chrome.browser.ntp.ContextMenuManager.TouchEnabledDelegate;
++import org.chromium.chrome.browser.ntp.LogoBridge.Logo;
++import org.chromium.chrome.browser.ntp.LogoBridge.LogoObserver;
++import org.chromium.chrome.browser.ntp.LogoDelegateImpl;
++import org.chromium.chrome.browser.ntp.LogoView;
+ import org.chromium.chrome.browser.ntp.cards.NewTabPageAdapter;
+ import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
++import org.chromium.chrome.browser.omnibox.UrlFocusChangeListener;
+ import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.chrome.browser.search_engines.TemplateUrlService;
++import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
+ import org.chromium.chrome.browser.snackbar.SnackbarManager;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+@@ -38,7 +26,6 @@ import org.chromium.chrome.browser.widget.LoadingView;
+ import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet;
+ import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.StateChangeReason;
+ import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetContentController;
++import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetNewTabController;
+ import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
+ import org.chromium.content.browser.BrowserStartupController;
+ 
+@@ -47,13 +34,7 @@ import java.util.List;
+ /**
+  * Provides content to be displayed inside of the Home tab of bottom sheet.
+  */
++public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetContent,
++                                                      BottomSheetNewTabController.Observer,
++                                                      TemplateUrlServiceObserver,
++                                                      UrlFocusChangeListener {
++
++    private static final long ANIMATION_DURATION_MS = 150L;
++
+-public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetContent {
+     private final View mView;
+     private final SuggestionsRecyclerView mRecyclerView;
+     private final ChromeActivity mActivity;
+@@ -64,8 +45,6 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+     private SuggestionsUiDelegateImpl mSuggestionsUiDelegate;
+     private TileGroup.Delegate mTileGroupDelegate;
+     private SuggestionsSheetVisibilityChangeObserver mBottomSheetObserver;
++    private LogoView mLogoView;
++    private LogoDelegateImpl mLogoDelegate;
+ 
+     @Nullable
+     private SuggestionsCarousel mSuggestionsCarousel;
+@@ -74,23 +53,6 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+ 
+     private boolean mSuggestionsInitialized;
+     private boolean mIsDestroyed;
++    private boolean mSearchProviderHasLogo = true;
++
++    /**
++     * The transition fraction for hiding the logo: 0 means the logo is fully visible, 1 means it is
++     * fully invisible and the toolbar is at the top. When the URL focus animation is running, that
++     * determines the logo movement. Otherwise, the logo moves at the same speed as the scrolling of
++     * the RecyclerView.
++     */
++    private float mTransitionFraction = 1f;
++    private float mTransitionFractionBeforeAnimation = 1f;
++
++    /** The toolbar height in pixels. */
++    private final int mToolbarHeight;
++
++    /** The maximum vertical toolbar offset in pixels. */
++    private ValueAnimator mAnimator;
++    private final Interpolator mInterpolator = new DecelerateInterpolator();
+ 
+     public SuggestionsBottomSheetContent(final ChromeActivity activity, final BottomSheet sheet,
+             TabModelSelector tabModelSelector, SnackbarManager snackbarManager) {
+@@ -104,7 +66,6 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+         mView.setBackgroundColor(backgroundColor);
+         mRecyclerView = mView.findViewById(R.id.recycler_view);
+         mRecyclerView.setBackgroundColor(backgroundColor);
++        mToolbarHeight = resources.getDimensionPixelSize(R.dimen.bottom_control_container_height);
+ 
+         LoadingView loadingView = mView.findViewById(R.id.loading_view);
+ 
+@@ -129,7 +90,6 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+                             mRecyclerView.setVisibility(View.VISIBLE);
+                             loadingView.hideLoadingUI();
+                             initializeWithNative(tabModelSelector, snackbarManager);
++                            updateLogoVisibility();
+                         }
+ 
+                         @Override
+@@ -177,14 +137,8 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+                     offlinePageBridge, mActivity, mActivity.getTabModelSelector());
+         }
+ 
++        // Inflate the logo in a container so its layout attributes are applied, then take it out.
++        FrameLayout logoContainer = (FrameLayout) LayoutInflater.from(mActivity).inflate(
++                R.layout.suggestions_bottom_sheet_logo, null);
++        mLogoView = logoContainer.findViewById(R.id.search_provider_logo);
++        logoContainer.removeView(mLogoView);
++
+         mAdapter = new NewTabPageAdapter(mSuggestionsUiDelegate,
++                /* aboveTheFoldView = */ null, mLogoView, uiConfig, offlinePageBridge,
+-                /* aboveTheFoldView = */ null, /* logoView = */ null, uiConfig, offlinePageBridge,
+                 mContextMenuManager, mTileGroupDelegate, mSuggestionsCarousel,
+                 mContextualSuggestions);
+ 
+@@ -239,26 +193,6 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+                 mRecyclerView.setAdapter(null);
+             }
+         };
++
++        mLogoDelegate = new LogoDelegateImpl(navigationDelegate, mLogoView, profile);
++        updateSearchProviderHasLogo();
++        if (mSearchProviderHasLogo) {
++            mLogoView.showSearchProviderInitialView();
++            loadSearchProviderLogo();
++        }
++        TemplateUrlService.getInstance().addObserver(this);
++
++        mView.addOnAttachStateChangeListener(new OnAttachStateChangeListener() {
++            @Override
++            public void onViewAttachedToWindow(View v) {
++                updateLogoVisibility();
++            }
++
++            @Override
++            public void onViewDetachedFromWindow(View v) {
++                updateLogoVisibility();
++            }
++        });
+     }
+ 
+     @Override
+@@ -295,16 +229,10 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+     public void destroy() {
+         mIsDestroyed = true;
+ 
++        if (mAnimator != null) {
++            mAnimator.removeAllUpdateListeners();
++            mAnimator.cancel();
++        }
++
+         if (mSuggestionsInitialized) {
+             mBottomSheetObserver.onDestroy();
+             mSuggestionsUiDelegate.onDestroy();
+             mTileGroupDelegate.destroy();
++            TemplateUrlService.getInstance().removeObserver(this);
+ 
+             if (mContextualSuggestions != null) mContextualSuggestions.destroy();
+         }
+@@ -325,38 +253,6 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+         mRecyclerView.smoothScrollToPosition(0);
+     }
+ 
++    @Override
++    public void onNewTabShown() {
++        updateLogoVisibility();
++        maybeUpdateContextualSuggestions();
++    }
++
++    @Override
++    public void onNewTabHidden() {
++        updateLogoVisibility();
++    }
++
++    @Override
++    public void onTemplateURLServiceChanged() {
++        updateSearchProviderHasLogo();
++        loadSearchProviderLogo();
++        updateLogoVisibility();
++    }
++
++    @Override
++    public void onUrlFocusChange(final boolean hasFocus) {
++        if (hasFocus && !isAnimating()) mTransitionFractionBeforeAnimation = mTransitionFraction;
++
++        float startFraction = mTransitionFraction;
++        float endFraction = hasFocus ? 1.0f : mTransitionFractionBeforeAnimation;
++
++        if (isAnimating()) mAnimator.cancel();
++        mAnimator = ValueAnimator.ofFloat(startFraction, endFraction);
++        mAnimator.setDuration(ANIMATION_DURATION_MS);
++        mAnimator.setInterpolator(mInterpolator);
++        mAnimator.start();
++    }
++
+     private void maybeUpdateContextualSuggestions() {
+         if (mSuggestionsCarousel == null && mContextualSuggestions == null) return;
+ 
+@@ -371,49 +267,8 @@ public class SuggestionsBottomSheetContent implements BottomSheet.BottomSheetCon
+         if (mContextualSuggestions != null) {
+             assert ChromeFeatureList.isEnabled(
+                     ChromeFeatureList.CONTEXTUAL_SUGGESTIONS_ABOVE_ARTICLES);
++            if (!mSheet.isShowingNewTab()) {
++                mContextualSuggestions.setSectionVisiblity(true);
++                mContextualSuggestions.refresh(currentUrl);
++            } else {
++                mContextualSuggestions.setSectionVisiblity(false);
++            }
+-            mContextualSuggestions.setSectionVisiblity(true);
+-            mContextualSuggestions.refresh(currentUrl);
+         }
+     }
++
++    private void updateSearchProviderHasLogo() {
++        mSearchProviderHasLogo = TemplateUrlService.getInstance().doesDefaultSearchEngineHaveLogo();
++    }
++
++    /**
++     * Loads the search provider logo, if any.
++     */
++    private void loadSearchProviderLogo() {
++        if (!mSearchProviderHasLogo) return;
++
++        mLogoView.showSearchProviderInitialView();
++
++        mLogoDelegate.getSearchProviderLogo(new LogoObserver() {
++            @Override
++            public void onLogoAvailable(Logo logo, boolean fromCache) {
++                if (logo == null && fromCache) return;
++
++                mLogoView.setDelegate(mLogoDelegate);
++                mLogoView.updateLogo(logo);
++            }
++        });
++    }
++
++    private void updateLogoVisibility() {
++        int top = mToolbarHeight;
++        int left = mRecyclerView.getPaddingLeft();
++        int right = mRecyclerView.getPaddingRight();
++        int bottom = mRecyclerView.getPaddingBottom();
++        mRecyclerView.setPadding(left, top, right, bottom);
++
++        mRecyclerView.scrollToPosition(0);
++    }
++
++    private boolean isAnimating() {
++        return mAnimator != null && mAnimator.isRunning();
++    }
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsNavigationDelegateImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsNavigationDelegateImpl.java
+index 60f5b69..57166b6 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsNavigationDelegateImpl.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsNavigationDelegateImpl.java
+@@ -213,13 +213,10 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
+                 TabLaunchType.FROM_LONGPRESS_BACKGROUND, mHost.getActiveTab(),
+                 /* incognito = */ false);
+ 
++        // If the bottom sheet NTP UI is showing, a toast is not necessary because the bottom sheet
++        // will be closed when the overview is hidden due to the new tab creation above.
+         // If animations are disabled in the DeviceClassManager, a toast is already displayed for
+         // all tabs opened in the background.
+         // TODO(twellington): Replace this with an animation.
++        if (mActivity.getBottomSheet() != null && !mActivity.getBottomSheet().isShowingNewTab()
++                && DeviceClassManager.enableAnimations()) {
+-        if (mActivity.getBottomSheet() != null && DeviceClassManager.enableAnimations()) {
+             Toast.makeText(mActivity, R.string.open_in_new_tab_toast, Toast.LENGTH_SHORT).show();
+         }
+ 
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModel.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModel.java
+index c5df085..52f7bdd 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModel.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModel.java
+@@ -136,12 +136,4 @@ public class EmptyTabModel implements TabModel {
+ 
+     @Override
+     public void openMostRecentlyClosedTab() {}
++
++    @Override
++    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
++
++    @Override
++    public boolean isPendingTabAdd() {
++        return false;
++    }
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModelObserver.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModelObserver.java
+index edcf2fc..04b51c0 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModelObserver.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/EmptyTabModelObserver.java
+@@ -49,7 +49,4 @@ public class EmptyTabModelObserver implements TabModelObserver {
+ 
+     @Override
+     public void tabRemoved(Tab tab) {}
++
++    @Override
++    public void pendingTabAdd(boolean isPendingTabAdd) {}
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/IncognitoTabModel.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/IncognitoTabModel.java
+index c3e7aa0..d3eeb36 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/IncognitoTabModel.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/IncognitoTabModel.java
+@@ -72,8 +72,7 @@ public class IncognitoTabModel implements TabModel {
+      */
+     protected void destroyIncognitoIfNecessary() {
+         ThreadUtils.assertOnUiThread();
++        if (!isEmpty() || mDelegateModel instanceof EmptyTabModel || mIsAddingTab
++                || mDelegateModel.isPendingTabAdd()) {
+-        if (!isEmpty() || mDelegateModel instanceof EmptyTabModel || mIsAddingTab) {
+             return;
+         }
+ 
+@@ -241,18 +240,4 @@ public class IncognitoTabModel implements TabModel {
+     @Override
+     public void openMostRecentlyClosedTab() {
+     }
++
++    @Override
++    public void setIsPendingTabAdd(boolean isPendingTabAdd) {
++        mIsAddingTab = isPendingTabAdd;
++        if (isPendingTabAdd) ensureTabModelImpl();
++        mDelegateModel.setIsPendingTabAdd(isPendingTabAdd);
++        mIsAddingTab = false;
++        if (!isPendingTabAdd) destroyIncognitoIfNecessary();
++    }
++
++    @Override
++    public boolean isPendingTabAdd() {
++        return mDelegateModel.isPendingTabAdd();
++    }
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/SingleTabModel.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/SingleTabModel.java
+index e5be99e..ab007e1 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/SingleTabModel.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/SingleTabModel.java
+@@ -187,12 +187,4 @@ public class SingleTabModel implements TabModel {
+ 
+     @Override
+     public void openMostRecentlyClosedTab() {}
++
++    @Override
++    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
++
++    @Override
++    public boolean isPendingTabAdd() {
++        return false;
++    }
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModel.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModel.java
+index 14b64e1..2c39204 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModel.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModel.java
+@@ -213,19 +213,6 @@ public interface TabModel extends TabList {
+     void removeTab(Tab tab);
+ 
+     /**
++     * Indicates that a new tab may be added to the model soon. Allows the model to initialize
++     * anything necessary for the creation of a tab or perform cleanup once a new tab is no longer
++     * pending addition.
++     * @param isPendingTabAdd Whether a new tab is pending addition to this model.
++     */
++    void setIsPendingTabAdd(boolean isPendingTabAdd);
++
++    /**
++     * Whether a new tab is pending addition to this model.
++     */
++    boolean isPendingTabAdd();
++
++    /**
+      * Subscribes a {@link TabModelObserver} to be notified about changes to this model.
+      * @param observer The observer to be subscribed.
+      */
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelImpl.java
+index f8378d6..5c9670a 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelImpl.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelImpl.java
+@@ -67,11 +67,6 @@ public class TabModelImpl extends TabModelJniBridge {
+      */
+     private boolean mIsUndoSupported = true;
+ 
++    /**
++     * Whether a tab is currently pending addition to this model.
++     */
++    private boolean mIsPendingTabAdd;
++
+     public TabModelImpl(boolean incognito, boolean isTabbedActivity, TabCreator regularTabCreator,
+             TabCreator incognitoTabCreator, TabModelSelectorUma uma,
+             TabModelOrderController orderController, TabContentManager tabContentManager,
+@@ -129,8 +124,6 @@ public class TabModelImpl extends TabModelJniBridge {
+         try {
+             TraceEvent.begin("TabModelImpl.addTab");
+ 
++            mIsPendingTabAdd = false;
++
+             for (TabModelObserver obs : mObservers) obs.willAddTab(tab, type);
+ 
+             boolean selectTab = mOrderController.willOpenInForeground(type, isIncognito());
+@@ -743,7 +736,7 @@ public class TabModelImpl extends TabModelJniBridge {
+ 
+     @Override
+     public int index() {
++        return mIsPendingTabAdd ? INVALID_TAB_INDEX : mIndex;
+-        return mIndex;
+     }
+ 
+     @Override
+@@ -767,15 +760,4 @@ public class TabModelImpl extends TabModelJniBridge {
+         // If there is only one tab, select it.
+         if (getCount() == 1) setIndex(0, TabSelectionType.FROM_NEW);
+     }
++
++    @Override
++    public void setIsPendingTabAdd(boolean isPendingTabAdd) {
++        mIsPendingTabAdd = isPendingTabAdd;
++        for (TabModelObserver obs : mObservers) obs.pendingTabAdd(isPendingTabAdd);
++    }
++
++    @Override
++    public boolean isPendingTabAdd() {
++        return mIsPendingTabAdd;
++    }
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelObserver.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelObserver.java
+index 44678bc..44d94c3 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelObserver.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelObserver.java
+@@ -107,12 +107,4 @@ public interface TabModelObserver {
+      * @param tab The tab that has been removed.
+      */
+     void tabRemoved(Tab tab);
++
++    /**
++     * Called when a new tab may be added to the model soon and after a new tab is no longer
++     * pending addition.
++     *
++     * @param isPendingTabAdd Whether a new tab is pending addition to this model.
++     */
++    void pendingTabAdd(boolean isPendingTabAdd);
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabWindowManager.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabWindowManager.java
+index 5a7c414..7d1cb10 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabWindowManager.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabWindowManager.java
+@@ -155,12 +155,6 @@ public class TabWindowManager implements ActivityStateListener {
+      *         in use by any live tab model selectors.
+      */
+     public boolean canDestroyIncognitoProfile() {
++        for (int i = 0; i < mSelectors.size(); i++) {
++            if (mSelectors.get(i) != null && mSelectors.get(i).getModel(true).isPendingTabAdd()) {
++                return false;
++            }
++        }
++
+         return getIncognitoTabCount() == 0;
+     }
+ 
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/document/DocumentTabModelImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/document/DocumentTabModelImpl.java
+index 19969a1..49d64b6 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/document/DocumentTabModelImpl.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/document/DocumentTabModelImpl.java
+@@ -335,12 +335,4 @@ public class DocumentTabModelImpl extends TabModelJniBridge implements DocumentT
+ 
+     @Override
+     public void openMostRecentlyClosedTab() {}
++
++    @Override
++    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
++
++    @Override
++    public boolean isPendingTabAdd() {
++        return false;
++    }
+ }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/toolbar/BottomToolbarPhone.java b/chrome/android/java/src/org/chromium/chrome/browser/toolbar/BottomToolbarPhone.java
+index 35d61f1..ac54ceb 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/toolbar/BottomToolbarPhone.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/toolbar/BottomToolbarPhone.java
+@@ -131,12 +131,9 @@ public class BottomToolbarPhone extends ToolbarPhone {
+     private TintedImageButton mExpandButton;
+ 
+     /**
++     * Whether some of the toolbar buttons are hidden regardless of whether the URL bar is focused.
++     * If {@link #mShowMenuButtonWhenSheetOpen} is false, all buttons are hidden.
++     * If {@link #mShowMenuButtonWhenSheetOpen} is true, all buttons besides the menu button are
++     * hidden.
+-     * Whether the toolbar buttons are hidden regardless of whether the URL bar is focused.
+      */
++    private boolean mHidingSomeToolbarButtons;
+-    private boolean mHidingToolbarButtons;
+ 
+     /**
+      * This tracks the height fraction of the bottom bar to determine if it is moving up or down.
+@@ -176,9 +173,6 @@ public class BottomToolbarPhone extends ToolbarPhone {
+     /** Whether the disappearance of the toolbar buttons is currently animating. */
+     private boolean mAnimatingToolbarButtonDisappearance;
+ 
++    /** Whether the menu button should be shown while the sheet is open. */
++    private boolean mShowMenuButtonWhenSheetOpen;
++
+     /** The height of the location bar background. */
+     private float mLocationBarBackgroundHeight;
+ 
+@@ -349,11 +343,6 @@ public class BottomToolbarPhone extends ToolbarPhone {
+         return mBottomSheet.isSheetOpen() || super.shouldDrawShadow();
+     }
+ 
++    @Override
++    public boolean isReadyForTextureCapture() {
++        return super.isReadyForTextureCapture() && !mBottomSheet.isShowingNewTab();
++    }
++
+     /** Shows the tab switcher toolbar. */
+     public void showTabSwitcherToolbar() {
+         setTabSwitcherMode(true, true, false);
+@@ -598,9 +587,7 @@ public class BottomToolbarPhone extends ToolbarPhone {
+     }
+ 
+     private int getToolbarButtonsWidthForBackgroundOffset() {
++        return mShowMenuButtonWhenSheetOpen
++                ? mToolbarButtonsContainer.getMeasuredWidth() - mMenuButton.getMeasuredWidth()
++                : mToolbarButtonsContainer.getMeasuredWidth();
+-        return mToolbarButtonsContainer.getMeasuredWidth();
+     }
+ 
+     private int getLocationBarBackgroundLeftOffset() {
+@@ -617,10 +604,9 @@ public class BottomToolbarPhone extends ToolbarPhone {
+ 
+     @Override
+     protected int getBoundsAfterAccountingForRightButtons() {
++        if (!mHidingSomeToolbarButtons) return super.getBoundsAfterAccountingForRightButtons();
+-        if (!mHidingToolbarButtons) return super.getBoundsAfterAccountingForRightButtons();
+ 
++        return !mShowMenuButtonWhenSheetOpen ? mToolbarSidePadding
++                                             : mMenuButton.getMeasuredWidth() + mToolbarSidePadding;
+-        return mMenuButton.getMeasuredWidth() + mToolbarSidePadding;
+     }
+ 
+     @Override
+@@ -765,12 +751,11 @@ public class BottomToolbarPhone extends ToolbarPhone {
+         }
+ 
+         if (mBottomSheet != null && mBottomSheet.isSheetOpen()) {
++            mShowMenuButtonWhenSheetOpen = mBottomSheet.isShowingNewTab();
+             updateButtonsContainerVisibilityAndTranslation();
+             updateMenuButtonClickableState();
+         }
+ 
++        mToggleTabStackButton.setClickable(mBottomSheet == null || !mBottomSheet.isShowingNewTab());
+-        mToggleTabStackButton.setClickable(mBottomSheet == null);
+ 
+         DrawableCompat.setTint(mLocationBarBackground,
+                 isIncognito() ? Color.WHITE
+@@ -860,15 +845,14 @@ public class BottomToolbarPhone extends ToolbarPhone {
+     @Override
+     protected int getToolbarButtonVisibility() {
+         if (mUrlExpansionPercent == 1f) return INVISIBLE;
++        if (mShowMenuButtonWhenSheetOpen) return VISIBLE;
++        if (mHidingSomeToolbarButtons) return INVISIBLE;
+-        if (mHidingToolbarButtons) return INVISIBLE;
+         return VISIBLE;
+     }
+ 
+     @Override
+     protected float getUrlActionsTranslationXForExpansionAnimation(
+             boolean isLocationBarRtl, float locationBarBaseTranslationX) {
++        if (!mHidingSomeToolbarButtons) {
+-        if (!mHidingToolbarButtons) {
+             return super.getUrlActionsTranslationXForExpansionAnimation(
+                     isLocationBarRtl, locationBarBaseTranslationX);
+         }
+@@ -992,8 +976,7 @@ public class BottomToolbarPhone extends ToolbarPhone {
+ 
+         if (mUrlFocusChangeInProgress) {
+             if (visible) {
++                mHidingSomeToolbarButtons = false;
++                mShowMenuButtonWhenSheetOpen = false;
+-                mHidingToolbarButtons = false;
+                 mToolbarButtonVisibilityPercent = 1.f;
+ 
+                 mToolbarButtonsContainer.setAlpha(1.f);
+@@ -1021,9 +1004,8 @@ public class BottomToolbarPhone extends ToolbarPhone {
+         mAnimatingToolbarButtonAppearance = visible;
+ 
+         if (!visible) {
++            mShowMenuButtonWhenSheetOpen = mBottomSheet.isShowingNewTab();
++            mHidingSomeToolbarButtons = true;
++            mLayoutLocationBarInFocusedMode = !mShowMenuButtonWhenSheetOpen;
+-            mHidingToolbarButtons = true;
+-            mLayoutLocationBarInFocusedMode = true;
+             requestLayout();
+         } else {
+             mDisableLocationBarRelayout = true;
+@@ -1032,10 +1014,9 @@ public class BottomToolbarPhone extends ToolbarPhone {
+ 
+     private void onToolbarButtonAnimationEnd(boolean visible) {
+         if (visible) {
++            mHidingSomeToolbarButtons = false;
+-            mHidingToolbarButtons = false;
+             mDisableLocationBarRelayout = false;
+             mLayoutLocationBarInFocusedMode = false;
++            mShowMenuButtonWhenSheetOpen = false;
+             requestLayout();
+         }
+ 
+@@ -1047,7 +1028,7 @@ public class BottomToolbarPhone extends ToolbarPhone {
+     @Override
+     protected void onUrlFocusChangeAnimationFinished() {
+         if (urlHasFocus()) {
++            mHidingSomeToolbarButtons = true;
+-            mHidingToolbarButtons = true;
+             mToolbarButtonVisibilityPercent = 0.f;
+             updateButtonsContainerVisibilityAndTranslation();
+         }
+@@ -1125,56 +1106,33 @@ public class BottomToolbarPhone extends ToolbarPhone {
+ 
+     /**
+      * Updates the visibility, alpha and translation of the buttons container based on
++     * {@link #mToolbarButtonVisibilityPercent}. If {@link #mShowMenuButtonWhenSheetOpen} is true,
++     * the tab switcher button and, if present, the expand button are faded out; nothing is
++     * translated. If {@link #mShowMenuButtonWhenSheetOpen} is false, the entire
++     * {@link #mToolbarButtonsContainer} is faded out and translated so that the buttons appear to
++     * slide off the toolbar.
+-     * {@link #mToolbarButtonVisibilityPercent}. The entire {@link #mToolbarButtonsContainer} is
+-     * faded out and translated so that the buttons appear to slide off the toolbar.
+      */
+     private void updateButtonsContainerVisibilityAndTranslation() {
++        if (mShowMenuButtonWhenSheetOpen) {
++            mToolbarButtonsContainer.setTranslationX(0);
++            mToolbarButtonsContainer.setAlpha(1.f);
++            mToolbarButtonsContainer.setVisibility(View.VISIBLE);
++
++            float buttonAlpha = mToolbarButtonVisibilityPercent <= 0.5
++                    ? 0
++                    : 1.f - ((1.f - mToolbarButtonVisibilityPercent) * 2);
++            mToggleTabStackButton.setAlpha(buttonAlpha);
++            mToggleTabStackButton.setVisibility(
++                    mToolbarButtonVisibilityPercent > 0.f ? View.VISIBLE : View.INVISIBLE);
++
++            if (mUseExpandButton) {
++                if (mTabSwitcherState != ENTERING_TAB_SWITCHER) mExpandButton.setAlpha(buttonAlpha);
++                mExpandButton.setVisibility(
++                        mToolbarButtonVisibilityPercent > 0.f ? View.VISIBLE : View.INVISIBLE);
++            }
++        } else {
++            mToggleTabStackButton.setAlpha(1.f);
++            mToggleTabStackButton.setVisibility(View.VISIBLE);
+-        mToggleTabStackButton.setAlpha(1.f);
+-        mToggleTabStackButton.setVisibility(View.VISIBLE);
+ 
++            if (mUseExpandButton) {
++                if (mTabSwitcherState != ENTERING_TAB_SWITCHER) mExpandButton.setAlpha(1.f);
++                mExpandButton.setVisibility(View.VISIBLE);
++            }
+-        if (mUseExpandButton) {
+-            if (mTabSwitcherState != ENTERING_TAB_SWITCHER) mExpandButton.setAlpha(1.f);
+-            mExpandButton.setVisibility(View.VISIBLE);
+-        }
+ 
++            boolean isRtl = ApiCompatibilityUtils.isLayoutRtl(this);
+-        boolean isRtl = ApiCompatibilityUtils.isLayoutRtl(this);
+ 
++            float toolbarButtonsContainerWidth = mToolbarButtonsContainer.getMeasuredWidth();
++            float toolbarButtonsTranslationX =
++                    toolbarButtonsContainerWidth * (1.f - mToolbarButtonVisibilityPercent);
++            if (isRtl) toolbarButtonsTranslationX *= -1;
+-        float toolbarButtonsContainerWidth = mToolbarButtonsContainer.getMeasuredWidth();
+-        float toolbarButtonsTranslationX =
+-                toolbarButtonsContainerWidth * (1.f - mToolbarButtonVisibilityPercent);
+-        if (isRtl) toolbarButtonsTranslationX *= -1;
+ 
++            mToolbarButtonsContainer.setTranslationX(toolbarButtonsTranslationX);
++            mToolbarButtonsContainer.setAlpha(mToolbarButtonVisibilityPercent);
++            mToolbarButtonsContainer.setVisibility(
++                    mToolbarButtonVisibilityPercent > 0.f ? View.VISIBLE : View.INVISIBLE);
++        }
+-        mToolbarButtonsContainer.setTranslationX(toolbarButtonsTranslationX);
+-        mToolbarButtonsContainer.setAlpha(mToolbarButtonVisibilityPercent);
+-        mToolbarButtonsContainer.setVisibility(
+-                mToolbarButtonVisibilityPercent > 0.f ? View.VISIBLE : View.INVISIBLE);
+     }
+ 
+     private void updateMenuButtonClickableState() {
++        mMenuButton.setClickable(
++                !urlHasFocus() && (!mBottomSheet.isSheetOpen() || mBottomSheet.isShowingNewTab()));
+-        mMenuButton.setClickable(!urlHasFocus() && !mBottomSheet.isSheetOpen());
+     }
+ 
+     private void updateContentDescription() {
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarManager.java b/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarManager.java
+index d2cc183..ddefbe1 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarManager.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarManager.java
+@@ -306,12 +306,6 @@ public class ToolbarManager implements ToolbarTabController, UrlFocusChangeListe
+                 updateTabCount();
+                 refreshSelectedTab();
+             }
++
++            @Override
++            public void pendingTabAdd(boolean isPendingTabAdd) {
++                if (isPendingTabAdd) mPreselectedTabId = Tab.INVALID_TAB_ID;
++                refreshSelectedTab();
++            }
+         };
+ 
+         mTabObserver = new EmptyTabObserver() {
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarModelImpl.java b/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarModelImpl.java
+index 8c31707..4ccf231 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarModelImpl.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarModelImpl.java
+@@ -14,7 +14,6 @@ import org.chromium.base.ContextUtils;
+ import org.chromium.base.VisibleForTesting;
+ import org.chromium.chrome.R;
+ import org.chromium.chrome.browser.ChromeFeatureList;
++import org.chromium.chrome.browser.UrlConstants;
+ import org.chromium.chrome.browser.dom_distiller.DomDistillerServiceFactory;
+ import org.chromium.chrome.browser.dom_distiller.DomDistillerTabUtils;
+ import org.chromium.chrome.browser.locale.LocaleManager;
+@@ -103,13 +102,8 @@ public class ToolbarModelImpl
+     @Override
+     public String getCurrentUrl() {
+         // TODO(yusufo) : Consider using this for all calls from getTab() for accessing url.
++        if (!hasTab()) {
++            if (mBottomSheet != null && mBottomSheet.isShowingNewTab()) {
++                return UrlConstants.NTP_URL;
++            } else {
++                return "";
++            }
++        }
+-        if (!hasTab()) return "";
+-
+         // Tab.getUrl() returns empty string if it does not have a URL.
+         return getTab().getUrl().trim();
+     }
+@@ -240,8 +234,8 @@ public class ToolbarModelImpl
+         boolean isShownInRegularNtp = ntp != null && ntp.isLocationBarShownInNTP()
+                 && ChromeFeatureList.isEnabled(ChromeFeatureList.NTP_SHOW_GOOGLE_G_IN_OMNIBOX);
+ 
++        boolean isShownInBottomSheet = mBottomSheet != null && !mBottomSheet.isShowingNewTab()
++                && mBottomSheet.isSheetOpen() && TextUtils.isEmpty(urlBarText)
+-        boolean isShownInBottomSheet = mBottomSheet != null && mBottomSheet.isSheetOpen()
+-                && TextUtils.isEmpty(urlBarText)
+                 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT
+                 && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME_CLEAR_URL_ON_OPEN)
+                 && ChromeFeatureList.isEnabled(
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheet.java b/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheet.java
+index b335d64..869d373 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheet.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheet.java
+@@ -1665,38 +1665,6 @@ public class BottomSheet
+     // ---------------------------------------------------------------------------------------------
+ 
+     /**
++     * @return The {@link BottomSheetNewTabController} used to present the new tab UI.
++     */
++    public BottomSheetNewTabController getNewTabController() {
++        return null;
++    }
++
++    /**
++     * @return Whether the {@link BottomSheetNewTabController} is showing the new tab UI. This
++     *         returns true if a normal or incognito new tab is showing.
++     */
++    public boolean isShowingNewTab() {
++        return false;
++    }
++
++    /**
++     * Tells {@link BottomSheetNewTabController} to display the new tab UI.
++     * @param isIncognito Whether to display the incognito new tab UI.
++     */
++    public void displayNewTabUi(boolean isIncognito) {
++        throw new RuntimeException("This functionality is not supported in the base sheet.");
++    }
++
++    /**
++     * Tells {@link BottomSheetNewTabController} to display the specified content in a new tab.
++     * @param isIncognito Whether to display the incognito new tab UI.
++     * @param actionId The action id of the bottom sheet content to be displayed.
++     */
++    public void displayNewTabUi(boolean isIncognito, int actionId) {
++        throw new RuntimeException("This functionality is not supported in the base sheet.");
++    }
++
++    /**
+      * @return Whether or not the bottom sheet's toolbar is using the expand button.
+      */
+     public boolean isUsingExpandButton() {
+@@ -1704,15 +1672,6 @@ public class BottomSheet
+     }
+ 
+     /**
++     * Load a non-native URL in a new tab. This should be used when the new tab UI controlled by
++     * {@link BottomSheetContentController} is showing.
++     * @param params The params describing the URL to be loaded.
++     */
++    public void loadUrlInNewTab(LoadUrlParams params) {
++        throw new RuntimeException("This functionality is not supported in the base sheet.");
++    }
++
++    /**
+      * Defocus the omnibox.
+      */
+     public void defocusOmnibox() {
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetContentController.java b/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetContentController.java
+index 9215dfe..07ecd95 100644
++-- a/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetContentController.java
+-++ b/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetContentController.java
+@@ -423,12 +423,7 @@ public class BottomSheetContentController
+      * @param itemId The menu item id of the {@link BottomSheetContent} to show.
+      */
+     public void showContentAndOpenSheet(int itemId) {
++        if (mActivity.isInOverviewMode() && !mBottomSheet.isShowingNewTab()) {
++            // Open a new tab to show the content if currently in tab switcher and a new tab is
++            // not currently being displayed.
++            mShouldOpenSheetOnNextContentChange = true;
++            mBottomSheet.displayNewTabUi(mTabModelSelector.getCurrentModel().isIncognito(), itemId);
++        } else if (itemId != mSelectedItemId) {
+-        if (itemId != mSelectedItemId) {
+             mShouldOpenSheetOnNextContentChange = true;
+             selectItem(itemId);
+         } else if (mBottomSheet.getSheetState() != BottomSheet.SHEET_STATE_FULL) {
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNewTabController.java b/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNewTabController.java
+deleted file mode 100644
+index 2c6aa56..0000000
++-- a/chrome/android/java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNewTabController.java
+-++ /dev/null
+@@ -1,237 +0,0 @@
++// Copyright 2017 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.widget.bottomsheet;
++
++import org.chromium.chrome.R;
++import org.chromium.chrome.browser.ChromeActivity;
++import org.chromium.chrome.browser.compositor.layouts.EmptyOverviewModeObserver;
++import org.chromium.chrome.browser.compositor.layouts.LayoutManagerChrome;
++import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior.OverviewModeObserver;
++import org.chromium.chrome.browser.tabmodel.TabModelSelector;
++import org.chromium.chrome.browser.toolbar.BottomToolbarPhone;
++import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.StateChangeReason;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * A class that handles showing and hiding the bottom sheet new tab UI.
++ */
++public class BottomSheetNewTabController extends EmptyBottomSheetObserver {
++    /** Observe events related to the bottom sheet new tab UI. **/
++    public interface Observer {
++        /** Called when the bottom sheet NTP UI is shown. */
++        void onNewTabShown();
++
++        /** Called when the bottom sheet NTP UI is hidden. */
++        void onNewTabHidden();
++    }
++
++    private final BottomSheet mBottomSheet;
++    private final BottomToolbarPhone mToolbar;
++    private final ChromeActivity mActivity;
++    private final List<Observer> mObservers = new ArrayList<>();
++
++    private LayoutManagerChrome mLayoutManager;
++    private OverviewModeObserver mOverviewModeObserver;
++    private TabModelSelector mTabModelSelector;
++
++    private boolean mIsShowingNewTabUi;
++    private boolean mIsShowingNormalToolbar;
++    private boolean mHideOverviewOnClose;
++    private boolean mSelectIncognitoModelOnClose;
++
++    /**
++     * Creates a new {@link BottomSheetNewTabController}.
++     * @param bottomSheet The {@link BottomSheet} that will be opened as part of the new tab UI.
++     * @param toolbar The {@link BottomToolbarPhone} that this controller will set state on as part
++     *                of the new tab UI.
++     * @param activity The {@link ChromeActivity} containing the {@link BottomSheet}.
++     */
++    public BottomSheetNewTabController(
++            BottomSheet bottomSheet, BottomToolbarPhone toolbar, ChromeActivity activity) {
++        mBottomSheet = bottomSheet;
++        mBottomSheet.addObserver(this);
++        mToolbar = toolbar;
++        mActivity = activity;
++    }
++
++    /**
++     * @param observer An {@link Observer} to be notified of events related to the new tab UI.
++     */
++    public void addObserver(Observer observer) {
++        mObservers.add(observer);
++    }
++
++    /**
++     * @param observer The {@link Observer} to remove.
++     */
++    public void removeObserver(Observer observer) {
++        mObservers.remove(observer);
++    }
++
++    /**
++     * @param tabModelSelector A TabModelSelector for getting the current tab and activity.
++     */
++    public void setTabModelSelector(TabModelSelector tabModelSelector) {
++        mTabModelSelector = tabModelSelector;
++    }
++
++    /**
++     * @param layoutManager The {@link LayoutManagerChrome} used to show and hide overview mode.
++     */
++    public void setLayoutManagerChrome(LayoutManagerChrome layoutManager) {
++        assert mLayoutManager == null;
++
++        mLayoutManager = layoutManager;
++
++        mOverviewModeObserver = new EmptyOverviewModeObserver() {
++            @Override
++            public void onOverviewModeStartedHiding(boolean showToolbar, boolean delayAnimation) {
++                if (!mIsShowingNewTabUi
++                        || mBottomSheet.getTargetSheetState() == BottomSheet.SHEET_STATE_PEEK) {
++                    return;
++                }
++
++                // Close the bottom sheet to hide the new tab UI.
++                mBottomSheet.setSheetState(BottomSheet.SHEET_STATE_PEEK, true);
++            }
++        };
++        mLayoutManager.addOverviewModeObserver(mOverviewModeObserver);
++    }
++
++    /**
++     * Shows the new tab UI.
++     * @param isIncognito Whether to display the incognito new tab UI.
++     */
++    public void displayNewTabUi(boolean isIncognito) {
++        displayNewTabUi(isIncognito, R.id.action_home);
++    }
++
++    /**
++     * Shows the new tab UI with the specified content.
++     * @param isIncognito Whether to display the incognito new tab UI.
++     * @param actionId The action id of the bottom sheet content to be displayed.
++     */
++    public void displayNewTabUi(boolean isIncognito, int actionId) {
++        mIsShowingNewTabUi = true;
++        mHideOverviewOnClose = !mLayoutManager.overviewVisible();
++        mSelectIncognitoModelOnClose = mTabModelSelector.isIncognitoSelected()
++                && mTabModelSelector.getModel(true).getCount() > 0;
++
++        if (mActivity.getFullscreenManager() != null
++                && mActivity.getFullscreenManager().getPersistentFullscreenMode()) {
++            mActivity.getFullscreenManager().setPersistentFullscreenMode(false);
++        }
++
++        // Show the tab switcher if needed. The overview should be shown before the sheet is opened
++        // to ensure the toolbar ends up in the correct state.
++        if (!mLayoutManager.overviewVisible()) mLayoutManager.showOverview(true);
++
++        // Transition from the tab switcher toolbar back to the normal toolbar.
++        mToolbar.showNormalToolbar();
++        mIsShowingNormalToolbar = true;
++
++        // Tell the model that a new tab may be added soon.
++        mTabModelSelector.getModel(isIncognito).setIsPendingTabAdd(true);
++
++        // Select the correct model, immediately ending animations so that the previous sheet
++        // content is not in use while calling #setIsPendingTabAdd() on previous model.
++        if (mTabModelSelector.isIncognitoSelected() != isIncognito) {
++            mTabModelSelector.selectModel(isIncognito);
++            mBottomSheet.endTransitionAnimations();
++            mTabModelSelector.getModel(!isIncognito).setIsPendingTabAdd(false);
++        }
++
++        // Select the correct sheet content, immediately ending animations so that the sheet content
++        // is not in transition while the sheet is opening.
++        mActivity.getBottomSheetContentController().selectItem(actionId);
++        mBottomSheet.endTransitionAnimations();
++
++        // Open the sheet if it isn't already open to full height.
++        int sheetState = BottomSheet.SHEET_STATE_FULL;
++        if (mBottomSheet.getSheetState() != sheetState) {
++            mBottomSheet.setSheetState(sheetState, true, StateChangeReason.NEW_TAB);
++        }
++
++        for (Observer observer : mObservers) observer.onNewTabShown();
++    }
++
++    /**
++     * @return Whether the the new tab UI is showing.
++     */
++    public boolean isShowingNewTabUi() {
++        return mIsShowingNewTabUi;
++    }
++
++    @Override
++    public void onSheetReleased() {
++        if (!mIsShowingNewTabUi) return;
++
++        // Start transitioning back to the tab switcher toolbar when the sheet is released to help
++        // smooth out animations.
++        if (mBottomSheet.getTargetSheetState() == BottomSheet.SHEET_STATE_PEEK) {
++            showTabSwitcherToolbarIfNecessary();
++        }
++    }
++
++    @Override
++    public void onSheetOffsetChanged(float heightFraction) {
++        if (!mIsShowingNewTabUi) return;
++
++        // Start transitioning to the tab switcher toolbar when the sheet is close to the bottom
++        // of the screen.
++        if (heightFraction < 0.2f
++                && mBottomSheet.getTargetSheetState() == BottomSheet.SHEET_STATE_PEEK) {
++            showTabSwitcherToolbarIfNecessary();
++        }
++    }
++
++    @Override
++    public void onSheetClosed(@StateChangeReason int reason) {
++        if (!mIsShowingNewTabUi) return;
++
++        mIsShowingNewTabUi = false;
++
++        if (mLayoutManager.overviewVisible()
++                && mTabModelSelector.isIncognitoSelected() != mSelectIncognitoModelOnClose
++                && (!mSelectIncognitoModelOnClose
++                           || mTabModelSelector.getModel(true).getCount() > 0)) {
++            mTabModelSelector.selectModel(mSelectIncognitoModelOnClose);
++            // End transitions immediately to ensure previous tab model is no longer in use and
++            // can be destroyed if necessary.
++            mBottomSheet.endTransitionAnimations();
++        }
++
++        mHideOverviewOnClose = mHideOverviewOnClose
++                && mTabModelSelector.getCurrentModel().getCount() > 0
++                && mLayoutManager.overviewVisible();
++
++        mTabModelSelector.getModel(false).setIsPendingTabAdd(false);
++        mTabModelSelector.getModel(true).setIsPendingTabAdd(false);
++
++        // Hide the overview after setting pendingTabAdd to false so that the StackLayout animation
++        // knows which tab index is being selected and animates the tab stacks correctly.
++        if (mHideOverviewOnClose) {
++            // TODO(twellington): Ideally we would start hiding the overview sooner. Modifications
++            // are needed for the StackLayout to know which tab will be selected before the sheet is
++            // closed so that it can animate properly.
++            mLayoutManager.hideOverview(true);
++        } else {
++            showTabSwitcherToolbarIfNecessary();
++        }
++
++        mHideOverviewOnClose = false;
++
++        for (Observer observer : mObservers) observer.onNewTabHidden();
++    }
++
++    private void showTabSwitcherToolbarIfNecessary() {
++        if (mLayoutManager.overviewVisible() && !mHideOverviewOnClose && mIsShowingNormalToolbar) {
++            mIsShowingNormalToolbar = false;
++            mToolbar.showTabSwitcherToolbar();
++        }
++    }
++}
+diff --git a/chrome/android/java_sources.gni b/chrome/android/java_sources.gni
+index 9fc8d3c..fae2c0a 100644
++-- a/chrome/android/java_sources.gni
+-++ b/chrome/android/java_sources.gni
+@@ -1407,7 +1407,6 @@ chrome_java_sources = [
+   "java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNavigationItemView.java",
+   "java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNavigationMenuView.java",
+   "java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNavigationView.java",
++  "java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetNewTabController.java",
+   "java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetObserver.java",
+   "java/src/org/chromium/chrome/browser/widget/bottomsheet/BottomSheetPaddingUtils.java",
+   "java/src/org/chromium/chrome/browser/widget/bottomsheet/ChromeHomeIphBubbleController.java",
+diff --git a/chrome/android/javatests/src/org/chromium/chrome/browser/suggestions/SuggestionsSheetVisibilityChangeObserverTest.java b/chrome/android/javatests/src/org/chromium/chrome/browser/suggestions/SuggestionsSheetVisibilityChangeObserverTest.java
+index 4cecaae..9b529e2 100644
++-- a/chrome/android/javatests/src/org/chromium/chrome/browser/suggestions/SuggestionsSheetVisibilityChangeObserverTest.java
+-++ b/chrome/android/javatests/src/org/chromium/chrome/browser/suggestions/SuggestionsSheetVisibilityChangeObserverTest.java
+@@ -24,11 +24,9 @@ import org.junit.Rule;
+ import org.junit.Test;
+ import org.junit.runner.RunWith;
+ 
++import org.chromium.base.ThreadUtils;
+ import org.chromium.base.test.util.CallbackHelper;
+ import org.chromium.base.test.util.DisabledTest;
+ import org.chromium.base.test.util.Restriction;
++import org.chromium.base.test.util.RetryOnFailure;
+ import org.chromium.chrome.R;
+ import org.chromium.chrome.browser.ChromeActivity;
+ import org.chromium.chrome.browser.ntp.NtpUiCaptureTestData;
+@@ -133,43 +131,6 @@ public class SuggestionsSheetVisibilityChangeObserverTest {
+         mEventReporter.surfaceOpenedHelper.verifyCallCount();
+     }
+ 
++    @Test
++    @MediumTest
++    @RetryOnFailure
++    public void testHomeSheetVisibilityOnNewTab() {
++        // Show the new tab view
++        ThreadUtils.runOnUiThreadBlocking(
++                () -> mActivityRule.getBottomSheet().getNewTabController().displayNewTabUi(false));
++        mObserver.expectEvents(InitialReveal, StateChange);
++        mEventReporter.surfaceOpenedHelper.waitForCallback();
++        assertEquals(BottomSheet.SHEET_STATE_FULL, mActivityRule.getBottomSheet().getSheetState());
++
++        // Tap the omnibox. The bottom sheet should still be full, with the keyboard coming up.
++        Espresso.onView(ViewMatchers.withId(R.id.url_bar)).perform(ViewActions.click());
++        assertEquals(BottomSheet.SHEET_STATE_FULL, mActivityRule.getBottomSheet().getSheetState());
++
++        // Type in the omnibox, the omnibox suggestion list should come hide the home sheet.
++        Espresso.onView(ViewMatchers.withId(R.id.url_bar)).perform(ViewActions.typeText("g"));
++        mObserver.expectEvents(Hidden, StateChange);
++        assertEquals(BottomSheet.SHEET_STATE_FULL, mActivityRule.getBottomSheet().getSheetState());
++
++        // Back hides the omnibox suggestions.
++        Espresso.pressBack();
++        waitForWindowUpdates();
++
++        mObserver.expectEvents(InitialReveal, StateChange);
++        assertEquals(BottomSheet.SHEET_STATE_FULL, mActivityRule.getBottomSheet().getSheetState());
++        mEventReporter.surfaceOpenedHelper.waitForCallback();
++        mEventReporter.surfaceOpenedHelper.verifyCallCount();
++
++        // Back again closes the bottom sheet
++        Espresso.pressBack();
++        mObserver.expectEvents(Hidden, StateChange, StateChange);
++        assertEquals(BottomSheet.SHEET_STATE_PEEK, mActivityRule.getBottomSheet().getSheetState());
++
++        mEventReporter.surfaceOpenedHelper.verifyCallCount();
++    }
++
+     static class TestVisibilityChangeObserver extends SuggestionsSheetVisibilityChangeObserver {
+         public enum Event { InitialReveal, Shown, Hidden, StateChange }
+ 
+diff --git a/chrome/android/javatests/src/org/chromium/chrome/browser/tabmodel/document/MockDocumentTabModel.java b/chrome/android/javatests/src/org/chromium/chrome/browser/tabmodel/document/MockDocumentTabModel.java
+index 4411ac9..d6de382 100644
++-- a/chrome/android/javatests/src/org/chromium/chrome/browser/tabmodel/document/MockDocumentTabModel.java
+-++ b/chrome/android/javatests/src/org/chromium/chrome/browser/tabmodel/document/MockDocumentTabModel.java
+@@ -160,12 +160,4 @@ public class MockDocumentTabModel implements DocumentTabModel {
+ 
+     @Override
+     public void openMostRecentlyClosedTab() {}
++
++    @Override
++    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
++
++    @Override
++    public boolean isPendingTabAdd() {
++        return false;
++    }
+ }
++- 
+2.7.4
+
