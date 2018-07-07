@@ -1,0 +1,43 @@
+diff --git a/chrome/android/java/res/values/strings.xml b/chrome/android/java/res/values/strings.xml
+index e6057b7..f860098 100644
+--- a/chrome/android/java/res/values/strings.xml
++++ b/chrome/android/java/res/values/strings.xml
+@@ -40,6 +40,9 @@
+     <string name="avoid_amp_websites_title">Remove AMP</string>
+     <string name="avoid_amp_websites_summary">Prefer direct websites instead of AMP version</string>
+ 
++    <string name="enable_bottom_toolbar_title">Bottom toolbar</string>
++    <string name="enable_bottom_toolbar_summary">Move address bar to the bottom</string>
++
+     <string name="open_in_external_app_title">Enable external applications</string>
+     <string name="open_in_external_app_summary">Open links with external applications (Maps, YouTube, Vimeo) when possible</string>
+ 
+diff --git a/chrome/android/java/res/xml/accessibility_preferences.xml b/chrome/android/java/res/xml/accessibility_preferences.xml
+index 7bb8494..4859daf 100644
+--- a/chrome/android/java/res/xml/accessibility_preferences.xml
++++ b/chrome/android/java/res/xml/accessibility_preferences.xml
+@@ -36,4 +36,9 @@
+         android:summary="@string/open_in_external_app_summary"
+         android:title="@string/open_in_external_app_title" />
+ 
++    <org.chromium.chrome.browser.preferences.ChromeBaseCheckBoxPreference
++        android:key="enable_bottom_toolbar"
++        android:summary="@string/enable_bottom_toolbar_summary"
++        android:title="@string/enable_bottom_toolbar_title" />
++
+ </PreferenceScreen>
+
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
+@@ -2316,7 +2316,10 @@ public class ChromeTabbedActivity
+ 
+     @Override
+     protected ChromeFullscreenManager createFullscreenManager() {
+-        return new ChromeFullscreenManager(this, ChromeFullscreenManager.CONTROLS_POSITION_TOP);
++        if (ContextUtils.getAppSharedPreferences().getBoolean("enable_bottom_toolbar", false))
++            return new ChromeFullscreenManager(this, ChromeFullscreenManager.CONTROLS_POSITION_BOTTOM);
++        else
++            return new ChromeFullscreenManager(this, ChromeFullscreenManager.CONTROLS_POSITION_TOP);
+     }
+ 
+     /**
+
